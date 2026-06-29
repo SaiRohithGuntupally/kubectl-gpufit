@@ -1,6 +1,7 @@
 package gpu
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -82,6 +83,64 @@ func TestDiagnoseDRA_ClaimMissing(t *testing.T) {
 		t.Fatalf("want claim-not-found cause, got:\n%s", titles(r))
 	}
 }
+
+func classObj(name string) resourcev1.DeviceClass {
+	return resourcev1.DeviceClass{ObjectMeta: metav1.ObjectMeta{Name: name}}
+}
+
+func sliceObj(driver string, devices ...string) resourcev1.ResourceSlice {
+	var ds []resourcev1.Device
+	for _, d := range devices {
+		ds = append(ds, resourcev1.Device{Name: d})
+	}
+	return resourcev1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{Name: driver + "-slice"},
+		Spec:       resourcev1.ResourceSliceSpec{Driver: driver, Devices: ds},
+	}
+}
+
+func detailOf(r Result) string {
+	s := ""
+	for _, c := range r.Causes {
+		s += c.Detail + "\n"
+	}
+	return s
+}
+
+func TestDiagnoseDRA_MissingDeviceClass(t *testing.T) {
+	pod := draPod("train", "gpu", "claim-1")
+	claims := []resourcev1.ResourceClaim{claimObj("claim-1", "gpu.nvidia.com", false)}
+	// A different class exists; the requested one does not.
+	classes := []resourcev1.DeviceClass{classObj("some.other.class")}
+	r := DiagnoseDRA(pod, claims, []resourcev1.ResourceSlice{}, classes)
+	if !contains(detailOf(r), "not found in the cluster") {
+		t.Fatalf("want missing-DeviceClass detail, got:\n%s", detailOf(r))
+	}
+}
+
+func TestDiagnoseDRA_NoDriverPublishing(t *testing.T) {
+	pod := draPod("train", "gpu", "claim-1")
+	claims := []resourcev1.ResourceClaim{claimObj("claim-1", "gpu.nvidia.com", false)}
+	classes := []resourcev1.DeviceClass{classObj("gpu.nvidia.com")}
+	r := DiagnoseDRA(pod, claims, []resourcev1.ResourceSlice{}, classes)
+	if !contains(detailOf(r), "No ResourceSlices publish any devices") {
+		t.Fatalf("want no-driver detail, got:\n%s", detailOf(r))
+	}
+}
+
+func TestDiagnoseDRA_DevicesPublishedButNoneFree(t *testing.T) {
+	pod := draPod("train", "gpu", "claim-1")
+	claims := []resourcev1.ResourceClaim{claimObj("claim-1", "gpu.nvidia.com", false)}
+	classes := []resourcev1.DeviceClass{classObj("gpu.nvidia.com")}
+	slices := []resourcev1.ResourceSlice{sliceObj("gpu.nvidia.com", "gpu-0", "gpu-1")}
+	r := DiagnoseDRA(pod, claims, slices, classes)
+	d := detailOf(r)
+	if !contains(d, "2 device(s) are published") || !contains(d, "gpu.nvidia.com") {
+		t.Fatalf("want devices-published-but-none-free detail, got:\n%s", d)
+	}
+}
+
+func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }
 
 func TestDiagnoseDRA_TemplateNotMaterialized(t *testing.T) {
 	pod := &corev1.Pod{

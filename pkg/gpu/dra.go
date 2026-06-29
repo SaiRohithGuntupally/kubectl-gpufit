@@ -114,23 +114,58 @@ func DiagnoseDRA(pod *corev1.Pod, claims []resourcev1.ResourceClaim, slices []re
 	return res
 }
 
-// unallocatedClaim describes an unallocated claim. With slices/classes it points
-// at the likely reason (no node publishes a matching device); without them it
-// reports the unallocated state and the classes involved.
+// unallocatedClaim describes an unallocated claim. When DeviceClasses and
+// ResourceSlices are supplied (non-nil), it pins the likely reason with concrete
+// evidence: a referenced DeviceClass doesn't exist, no DRA driver is publishing
+// devices, or devices exist but none are free/matching. With nil inputs it
+// reports the generic unallocated state.
 func unallocatedClaim(name string, fromTemplate bool, claim *resourcev1.ResourceClaim, slices []resourcev1.ResourceSlice, classes []resourcev1.DeviceClass) Cause {
 	clsList := sortedClassKeys(requestedClasses(claim))
 	classesStr := "(none)"
 	if len(clsList) > 0 {
 		classesStr = joinComma(clsList)
 	}
-	return Cause{
-		Severity: Blocker,
-		Title:    fmt.Sprintf("ResourceClaim %q is not allocated", name),
-		Detail: fmt.Sprintf(
-			"The scheduler hasn't been able to allocate devices for this claim (requested DeviceClass(es): %s), so the pod stays Pending. Common DRA causes: no node publishes a ResourceSlice with a device matching the class/selectors, the DRA driver isn't running, or all matching devices are already allocated.",
-			classesStr),
-		Fix: "Confirm the DRA driver for these classes is installed and publishing ResourceSlices (`kubectl get resourceslices`), that a DeviceClass named above exists, and that a node actually has a matching device free.",
+	title := fmt.Sprintf("ResourceClaim %q is not allocated", name)
+	detail := fmt.Sprintf("The scheduler couldn't allocate devices for this claim (requested DeviceClass(es): %s), so the pod stays Pending.", classesStr)
+	fix := "Confirm the DRA driver for these classes is installed and publishing ResourceSlices (`kubectl get resourceslices`), that the DeviceClass exists, and that a matching device is free."
+
+	// A referenced DeviceClass that doesn't exist can never match — definitive.
+	if classes != nil {
+		exists := map[string]bool{}
+		for i := range classes {
+			exists[classes[i].Name] = true
+		}
+		var missing []string
+		for _, c := range clsList {
+			if !exists[c] {
+				missing = append(missing, c)
+			}
+		}
+		if len(missing) > 0 {
+			detail += fmt.Sprintf(" DeviceClass(es) not found in the cluster: %s — the request can never be satisfied.", joinComma(missing))
+			fix = fmt.Sprintf("Create the missing DeviceClass(es) (%s) or reference an existing one in the claim's request.", joinComma(missing))
+			return Cause{Severity: Blocker, Title: title, Detail: detail, Fix: fix}
+		}
 	}
+
+	// Inventory: is any driver publishing devices at all?
+	if slices != nil {
+		total := 0
+		drivers := map[string]bool{}
+		for i := range slices {
+			drivers[slices[i].Spec.Driver] = true
+			total += len(slices[i].Spec.Devices)
+		}
+		if total == 0 {
+			detail += " No ResourceSlices publish any devices — the DRA driver for these classes isn't running or hasn't published its inventory."
+			fix = "Install/repair the DRA driver (e.g. the NVIDIA DRA driver) and confirm `kubectl get resourceslices` lists devices."
+		} else {
+			detail += fmt.Sprintf(" %d device(s) are published cluster-wide by driver(s) %s, but none could be allocated — likely all already in use, or none match the request's class/selectors.", total, joinComma(keys(drivers)))
+			fix = "Free a matching device (scale down / delete claims holding them), add nodes with matching devices, or relax the request's selectors."
+		}
+	}
+
+	return Cause{Severity: Blocker, Title: title, Detail: detail, Fix: fix}
 }
 
 func sortedClassKeys(m map[string]int64) []string {

@@ -15,16 +15,19 @@ spec:
       kubectl gpufit why <pod>       # why a GPU pod can't be scheduled, with the fix
 
     The `why` command explains, in plain English, the API-visible causes a GPU
-    pod stays Pending: no node advertises the resource (device plugin / GPU
-    Operator unhealthy, no such hardware, or the requested MIG profile isn't
-    configured), GPU fragmentation (enough GPUs in aggregate but not on one node),
-    insufficient free GPUs (Kubernetes allocates whole GPUs), and untolerated GPU
-    taints — each with a concrete fix.
+    pod stays Pending: no node advertises the resource — pinned to the exact
+    broken link in the GPU enablement chain (NFD → driver → toolkit →
+    device-plugin → GFD → DCGM → MIG-manager) — GPU fragmentation, insufficient
+    free GPUs (Kubernetes allocates whole GPUs), and untolerated GPU taints. It
+    also understands Dynamic Resource Allocation (DRA, k8s 1.34+): for pods using
+    resourceClaims it reports unallocated/missing claims, missing DeviceClasses,
+    and whether any DRA driver is publishing devices — each with a concrete fix.
   caveats: |
     Best-effort static analysis from the Kubernetes API. It models GPU/accelerator
-    extended resources (NVIDIA full GPUs and MIG slices, AMD/Intel GPUs) but not
-    GPU utilization, priority/preemption, or Dynamic Resource Allocation (DRA)
-    ResourceClaims yet. It reads cluster state (nodes, pods) and makes no changes.
+    extended resources (NVIDIA full GPUs and MIG slices, AMD/Intel GPUs), the GPU
+    enablement chain, and DRA claims — but not GPU utilization, priority/
+    preemption, or full CEL evaluation of DRA device selectors. It reads cluster
+    state (nodes, pods, and DRA objects) and makes no changes.
   platforms:
   - selector:
       matchLabels:

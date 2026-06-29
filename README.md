@@ -33,13 +33,19 @@ Pod ml/train-0  (requests 2 nvidia.com/gpu)
 
 ## What it detects (`gpufit why <pod>`)
 
-- **No node advertises the resource** — device plugin / GPU Operator missing or
-  unhealthy, no such hardware, the requested **MIG profile** isn't configured,
-  or GPU Feature Discovery hasn't labeled the nodes.
+**Extended-resource GPUs (`nvidia.com/gpu`, MIG, AMD/Intel):**
+- **No node advertises the resource** — and it names the **exact broken link in
+  the GPU enablement chain** (NFD → driver → container-toolkit → device-plugin →
+  GFD → DCGM → MIG-manager) with the pod to debug, instead of a generic checklist.
 - **GPU fragmentation** — enough GPUs in aggregate, but not on any single node.
 - **Insufficient free GPUs** — including the whole-GPU-per-pod trap (an 8 GB job
   on an 80 GB A100 still consumes a full GPU without MIG/time-slicing).
 - **Untolerated GPU taints** — free GPUs exist, but only on tainted nodes.
+
+**Dynamic Resource Allocation (DRA, k8s 1.34+):** for pods using
+`resourceClaims`, it resolves each claim (including template-generated ones) and
+explains why it's unsatisfied — claim not created, **DeviceClass missing**, **no
+DRA driver publishing ResourceSlices**, or devices published but none free.
 
 Each finding comes with a concrete fix. Exit code is `1` when a pod has a
 blocking cause (scriptable), `0` otherwise.
@@ -53,14 +59,15 @@ kubectl krew install gpufit
 ## Roadmap
 
 - `gpufit fit <manifest>` — pre-apply "will this GPU job schedule, and where?"
-- **DRA** (Dynamic Resource Allocation, k8s 1.34+) — introspect ResourceClaims /
-  DeviceClasses and explain device-level allocation.
+- **DRA selector matching** — evaluate DeviceClass/request CEL selectors against
+  published ResourceSlice device attributes for exact "why no match" answers.
 
 ## Caveats
 
 Best-effort static analysis from the Kubernetes API. It models GPU/accelerator
-extended resources but not utilization, priority/preemption, or DRA yet. It
-reads cluster state (nodes, pods) and makes no changes.
+extended resources, the GPU enablement chain, and DRA claims — but not GPU
+utilization, priority/preemption, or full CEL evaluation of DRA device selectors.
+It reads cluster state (nodes, pods, DRA objects) and makes no changes.
 
 ## License
 
