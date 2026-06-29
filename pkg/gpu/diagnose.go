@@ -75,7 +75,11 @@ func (r Result) HasBlocker() bool {
 // allocation view. It covers the API-visible causes: the requested resource
 // isn't advertised by any node (device plugin / hardware / MIG-profile mismatch),
 // fragmentation across nodes, insufficient free GPUs, and untolerated GPU taints.
-func Diagnose(pod *corev1.Pod, nodes []NodeGPU) Result {
+//
+// chain, if non-nil, is the GPU enablement dependency-chain status; it lets the
+// "no node advertises" finding point at the exact broken component. Pass nil to
+// skip that enrichment.
+func Diagnose(pod *corev1.Pod, nodes []NodeGPU, chain *ChainStatus) Result {
 	req := PodGPURequests(pod)
 	res := Result{Namespace: pod.Namespace, Pod: pod.Name, Requests: map[string]int64{}}
 	for k, v := range req {
@@ -130,16 +134,7 @@ func Diagnose(pod *corev1.Pod, nodes []NodeGPU) Result {
 
 		switch {
 		case advertisers == 0:
-			res.Causes = append(res.Causes, Cause{
-				Severity: Blocker,
-				Title:    fmt.Sprintf("No node advertises %s", name),
-				Detail: fmt.Sprintf(
-					"The pod requests %d of %q, but no Ready, schedulable node advertises it. For NVIDIA this usually means the device plugin / GPU Operator isn't installed or healthy, the node has no such hardware, the requested MIG profile isn't configured on any node, or GPU Feature Discovery hasn't labeled the nodes yet.",
-					need, name),
-				Fix: fmt.Sprintf(
-					"Verify the GPU Operator / device-plugin DaemonSet is Running (chain: NFD → driver → container-toolkit → device-plugin → GFD → DCGM → MIG-manager), confirm a node provides %q, and check it wasn't filtered out by a taint/selector.",
-					name),
-			})
+			res.Causes = append(res.Causes, notAdvertised(name, need, chain))
 		case need > maxFree && need <= sumFree && advertisers > 1:
 			res.Causes = append(res.Causes, Cause{
 				Severity: Blocker,

@@ -29,7 +29,7 @@ func titles(r Result) string {
 func has(r Result, substr string) bool { return strings.Contains(titles(r), substr) }
 
 func TestDiagnose_NoNodeAdvertises(t *testing.T) {
-	r := Diagnose(pendingGPUPod(1), nil)
+	r := Diagnose(pendingGPUPod(1), nil, nil)
 	if !has(r, "No node advertises") {
 		t.Fatalf("want not-advertised blocker, got:\n%s", titles(r))
 	}
@@ -43,7 +43,7 @@ func TestDiagnose_Fragmentation(t *testing.T) {
 	view := Cluster([]corev1.Node{gpuNode("g1", 4), gpuNode("g2", 4)}, []corev1.Pod{
 		gpuPod("a", "g1", 3), gpuPod("b", "g2", 3),
 	})
-	r := Diagnose(pendingGPUPod(2), view)
+	r := Diagnose(pendingGPUPod(2), view, nil)
 	if !has(r, "fragmentation") {
 		t.Fatalf("want fragmentation blocker, got:\n%s", titles(r))
 	}
@@ -51,7 +51,7 @@ func TestDiagnose_Fragmentation(t *testing.T) {
 
 func TestDiagnose_Insufficient(t *testing.T) {
 	view := Cluster([]corev1.Node{gpuNode("g1", 4)}, []corev1.Pod{gpuPod("a", "g1", 4)})
-	r := Diagnose(pendingGPUPod(1), view)
+	r := Diagnose(pendingGPUPod(1), view, nil)
 	if !has(r, "Insufficient free") {
 		t.Fatalf("want insufficient blocker, got:\n%s", titles(r))
 	}
@@ -61,7 +61,7 @@ func TestDiagnose_UntoleratedGPUTaint(t *testing.T) {
 	n := gpuNode("g1", 4)
 	n.Spec.Taints = []corev1.Taint{{Key: "nvidia.com/gpu", Value: "present", Effect: corev1.TaintEffectNoSchedule}}
 	view := Cluster([]corev1.Node{n}, nil)
-	r := Diagnose(pendingGPUPod(1), view)
+	r := Diagnose(pendingGPUPod(1), view, nil)
 	if !has(r, "untolerated GPU taints") {
 		t.Fatalf("want taint blocker, got:\n%s", titles(r))
 	}
@@ -73,7 +73,7 @@ func TestDiagnose_TolerationClearsTaint(t *testing.T) {
 	view := Cluster([]corev1.Node{n}, nil)
 	pod := pendingGPUPod(1)
 	pod.Spec.Tolerations = []corev1.Toleration{{Key: "nvidia.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}}
-	r := Diagnose(pod, view)
+	r := Diagnose(pod, view, nil)
 	if r.HasBlocker() {
 		t.Fatalf("toleration should clear the taint, got:\n%s", titles(r))
 	}
@@ -84,7 +84,7 @@ func TestDiagnose_TolerationClearsTaint(t *testing.T) {
 
 func TestDiagnose_NoGPURequest(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"}}
-	r := Diagnose(pod, nil)
+	r := Diagnose(pod, nil, nil)
 	if r.HasBlocker() || !has(r, "no GPU resources") {
 		t.Fatalf("want info-only no-GPU result, got:\n%s", titles(r))
 	}
@@ -92,7 +92,7 @@ func TestDiagnose_NoGPURequest(t *testing.T) {
 
 func TestDiagnose_FitsWhenRoomExists(t *testing.T) {
 	view := Cluster([]corev1.Node{gpuNode("g1", 8)}, []corev1.Pod{gpuPod("a", "g1", 2)})
-	r := Diagnose(pendingGPUPod(1), view)
+	r := Diagnose(pendingGPUPod(1), view, nil)
 	if r.HasBlocker() {
 		t.Fatalf("6 GPUs free, want no blocker, got:\n%s", titles(r))
 	}

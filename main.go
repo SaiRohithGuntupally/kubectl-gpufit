@@ -84,7 +84,7 @@ func main() {
 
 // runAlloc prints the cluster-wide GPU allocation view.
 func runAlloc(ctx context.Context, client kubernetes.Interface, opts options) error {
-	view, err := gatherGPU(ctx, client)
+	view, _, err := gatherGPU(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -102,11 +102,11 @@ func runWhy(ctx context.Context, client kubernetes.Interface, opts options) (boo
 	if err != nil {
 		return false, err
 	}
-	view, err := gatherGPU(ctx, client)
+	view, chain, err := gatherGPU(ctx, client)
 	if err != nil {
 		return false, err
 	}
-	res := gpu.Diagnose(p, view)
+	res := gpu.Diagnose(p, view, &chain)
 	if structured(opts.output) {
 		if err := emit(opts.output, res); err != nil {
 			return false, err
@@ -117,15 +117,16 @@ func runWhy(ctx context.Context, client kubernetes.Interface, opts options) (boo
 	return res.HasBlocker(), nil
 }
 
-// gatherGPU lists nodes and pods once and computes the GPU allocation view.
-func gatherGPU(ctx context.Context, client kubernetes.Interface) ([]gpu.NodeGPU, error) {
+// gatherGPU lists nodes and pods once and derives both the GPU allocation view
+// and the GPU enablement-chain status from the same snapshot.
+func gatherGPU(ctx context.Context, client kubernetes.Interface) ([]gpu.NodeGPU, gpu.ChainStatus, error) {
 	nodes, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		return nil, gpu.ChainStatus{}, err
 	}
 	pods, err := client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		return nil, gpu.ChainStatus{}, err
 	}
-	return gpu.Cluster(nodes.Items, pods.Items), nil
+	return gpu.Cluster(nodes.Items, pods.Items), gpu.AnalyzeOperatorChain(pods.Items), nil
 }
