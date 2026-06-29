@@ -10,6 +10,7 @@ type command int
 const (
 	cmdAlloc command = iota
 	cmdWhy
+	cmdFit
 )
 
 type options struct {
@@ -18,6 +19,7 @@ type options struct {
 	context    string
 	kubeconfig string
 	podName    string
+	file       string // manifest path for `fit`
 	output     string // "", "text", "json", "yaml"
 	noColor    bool
 }
@@ -74,6 +76,16 @@ func parseArgs(args []string) (options, error) {
 			return o, fmt.Errorf("unexpected extra argument %q", rest[1])
 		}
 		o.podName = rest[0]
+	case positionals[0] == "fit":
+		o.command = cmdFit
+		rest := positionals[1:]
+		if len(rest) == 0 {
+			return o, fmt.Errorf("`gpufit fit` needs a manifest file path")
+		}
+		if len(rest) > 1 {
+			return o, fmt.Errorf("unexpected extra argument %q", rest[1])
+		}
+		o.file = rest[0]
 	default:
 		return o, fmt.Errorf("unknown command %q (did you mean `gpufit why %s`?)", positionals[0], positionals[0])
 	}

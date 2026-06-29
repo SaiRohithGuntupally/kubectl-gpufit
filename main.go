@@ -20,6 +20,7 @@ const usage = `kubectl gpufit — GPU scheduling & allocation diagnostics
 USAGE:
   kubectl gpufit [flags]              show GPU allocatable vs allocated per node
   kubectl gpufit why <pod> [flags]    explain why a GPU pod can't be scheduled
+  kubectl gpufit fit <file> [flags]   simulate a manifest against the cluster's GPUs
 
 FLAGS:
   -n, --namespace <ns>     namespace for 'why' (default: current context namespace)
@@ -75,6 +76,15 @@ func main() {
 		if blocked {
 			os.Exit(1)
 		}
+	case cmdFit:
+		blocked, err := runFit(ctx, client, opts)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(3)
+		}
+		if blocked {
+			os.Exit(1)
+		}
 	default:
 		if err := runAlloc(ctx, client, opts); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -103,21 +113,9 @@ func runWhy(ctx context.Context, client kubernetes.Interface, opts options) (boo
 	if err != nil {
 		return false, err
 	}
-
-	// DRA pods (k8s 1.34+) request devices via resourceClaims, not extended
-	// resources, so they need a different analysis path.
-	var res gpu.Result
-	if gpu.UsesDRA(p) {
-		res, err = diagnoseDRA(ctx, client, p)
-		if err != nil {
-			return false, err
-		}
-	} else {
-		view, chain, err := gatherGPU(ctx, client)
-		if err != nil {
-			return false, err
-		}
-		res = gpu.Diagnose(p, view, &chain)
+	res, err := diagnosePodObj(ctx, client, p)
+	if err != nil {
+		return false, err
 	}
 	if structured(opts.output) {
 		if err := emit(opts.output, res); err != nil {
@@ -127,6 +125,19 @@ func runWhy(ctx context.Context, client kubernetes.Interface, opts options) (boo
 	}
 	printWhy(res)
 	return res.HasBlocker(), nil
+}
+
+// diagnosePodObj routes a pod object to the DRA or extended-resource analysis
+// path. Shared by `why` (a live pod) and `fit` (a pod loaded from a manifest).
+func diagnosePodObj(ctx context.Context, client kubernetes.Interface, p *corev1.Pod) (gpu.Result, error) {
+	if gpu.UsesDRA(p) {
+		return diagnoseDRA(ctx, client, p)
+	}
+	view, chain, err := gatherGPU(ctx, client)
+	if err != nil {
+		return gpu.Result{}, err
+	}
+	return gpu.Diagnose(p, view, &chain), nil
 }
 
 // diagnoseDRA fetches the DRA objects a pod depends on (its ResourceClaims, plus

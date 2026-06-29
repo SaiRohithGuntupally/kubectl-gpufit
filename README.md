@@ -52,6 +52,21 @@ satisfies your selectors"* from *"matching devices exist but are all in use."*
 Each finding comes with a concrete fix. Exit code is `1` when a pod has a
 blocking cause (scriptable), `0` otherwise.
 
+## Simulate before applying (`gpufit fit <manifest>`)
+
+Run the same diagnosis against a manifest *before* you apply it — a Pod, or any
+workload with a pod template (Deployment, StatefulSet, DaemonSet, Job, CronJob):
+
+```
+$ kubectl gpufit fit train-job.yaml
+Pod ml/(manifest)  (requests 8 nvidia.com/gpu)
+────────────────────────────────────────────────────────────────
+  ✗ GPU fragmentation — nvidia.com/gpu exists, but not on one node
+      ...
+```
+
+Exit `1` if it wouldn't schedule onto current GPUs, `0` if it would.
+
 ## Install
 
 ```
@@ -60,9 +75,9 @@ kubectl krew install gpufit
 
 ## Roadmap
 
-- `gpufit fit <manifest>` — pre-apply "will this GPU job schedule, and where?"
-- Per-device "why excluded" — surface which specific selector/attribute rejected
-  each device (today it reports match counts, not per-device reasons).
+- Candidate-node listing for `fit` — show *where* a pod would land, not just
+  whether it fits.
+- Richer DRA: per-device attribute diffs, ResourceClaimTemplate rendering.
 
 ## Caveats
 
