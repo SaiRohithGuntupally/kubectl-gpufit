@@ -168,6 +168,7 @@ func unallocatedClaim(name string, fromTemplate bool, claim *resourcev1.Resource
 		var zeroMatch []string
 		anyMatch := false
 		compileErr := ""
+		var topReject *selectorReject // most-rejecting selector across requests
 		for ri := range claim.Spec.Devices.Requests {
 			req := claim.Spec.Devices.Requests[ri].Exactly
 			if req == nil {
@@ -180,11 +181,17 @@ func unallocatedClaim(name string, fromTemplate bool, claim *resourcev1.Resource
 				anyMatch = true
 				continue
 			}
-			if _, m, ce := matchDevices(exprs, slices); ce != "" {
+			_, m, rejects, ce := matchDevices(exprs, slices)
+			switch {
+			case ce != "":
 				compileErr = ce
-			} else if m == 0 {
+			case m == 0:
 				zeroMatch = append(zeroMatch, req.DeviceClassName)
-			} else {
+				if len(rejects) > 0 && (topReject == nil || rejects[0].Rejected > topReject.Rejected) {
+					r := rejects[0]
+					topReject = &r
+				}
+			default:
 				anyMatch = true
 			}
 		}
@@ -194,7 +201,10 @@ func unallocatedClaim(name string, fromTemplate bool, claim *resourcev1.Resource
 			detail += fmt.Sprintf(" %d device(s) are published, but a selector couldn't be evaluated (%s).", total, compileErr)
 		case len(zeroMatch) > 0:
 			detail += fmt.Sprintf(" Of %d published device(s), none satisfy the CEL selectors for request class(es) %s (evaluated with the scheduler's matcher) — the attribute/selector constraints exclude every device.", total, joinComma(dedupe(zeroMatch)))
-			fix = "Loosen the request/DeviceClass CEL selectors, or add nodes whose devices expose the required attributes."
+			if topReject != nil {
+				detail += fmt.Sprintf(" The most restrictive selector — `%s` — rejected %d of them.", topReject.Expression, topReject.Rejected)
+			}
+			fix = "Loosen the request/DeviceClass CEL selectors (start with the most restrictive one above), or add nodes whose devices expose the required attributes."
 		case anyMatch:
 			detail += fmt.Sprintf(" %d device(s) are published and at least one matches the request's selectors, but the claim is still unallocated — the matching devices are already in use.", total)
 			fix = "Free a matching device (scale down / delete the claims holding it) or add nodes with more matching devices."

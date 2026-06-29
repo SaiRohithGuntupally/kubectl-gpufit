@@ -151,6 +151,34 @@ func TestDiagnoseDRA_DevicesPublishedButNoneFree(t *testing.T) {
 	}
 }
 
+func classWithSels(name string, exprs ...string) resourcev1.DeviceClass {
+	var sels []resourcev1.DeviceSelector
+	for _, e := range exprs {
+		sels = append(sels, resourcev1.DeviceSelector{CEL: &resourcev1.CELDeviceSelector{Expression: e}})
+	}
+	return resourcev1.DeviceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec:       resourcev1.DeviceClassSpec{Selectors: sels},
+	}
+}
+
+func TestDiagnoseDRA_CELNamesBottleneckSelector(t *testing.T) {
+	// Two selectors: one matches the devices, one rejects all of them. The
+	// rejecting one must be reported as the bottleneck.
+	pod := draPod("train", "gpu", "claim-1")
+	claims := []resourcev1.ResourceClaim{claimObj("claim-1", "gpu.nvidia.com", false)}
+	classes := []resourcev1.DeviceClass{classWithSels("gpu.nvidia.com",
+		`device.driver == "gpu.nvidia.com"`,
+		`device.driver == "nonexistent.driver"`,
+	)}
+	slices := []resourcev1.ResourceSlice{sliceObj("gpu.nvidia.com", "gpu-0", "gpu-1")}
+	r := DiagnoseDRA(pod, claims, slices, classes)
+	d := detailOf(r)
+	if !contains(d, "most restrictive selector") || !contains(d, "nonexistent.driver") {
+		t.Fatalf("want bottleneck selector named, got:\n%s", d)
+	}
+}
+
 func TestDiagnoseDRA_CELNoDeviceMatches(t *testing.T) {
 	// Class selector requires a driver that no published device has → 0 match.
 	pod := draPod("train", "gpu", "claim-1")

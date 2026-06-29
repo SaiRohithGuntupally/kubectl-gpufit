@@ -2,28 +2,38 @@ package gpu
 
 import (
 	"context"
+	"sort"
 
 	resourcev1 "k8s.io/api/resource/v1"
 	dracel "k8s.io/dynamic-resource-allocation/cel"
 )
 
+// selectorReject records how many published devices a single selector expression
+// rejected — used to name the bottleneck constraint when nothing matches.
+type selectorReject struct {
+	Expression string
+	Rejected   int
+}
+
 // matchDevices evaluates the given CEL selector expressions (drawn from a
 // DeviceClass and/or a device request) against every device published in the
 // ResourceSlices, using the scheduler's own CEL evaluator so the verdict matches
 // real allocation behavior. It returns how many devices were evaluated, how many
-// satisfy ALL expressions, and a compile-error string if any expression failed
-// to compile.
-func matchDevices(exprs []string, slices []resourcev1.ResourceSlice) (evaluated, matched int, compileErr string) {
+// satisfy ALL expressions, a per-expression rejection tally (sorted most-
+// rejecting first), and a compile-error string if any expression failed to
+// compile.
+func matchDevices(exprs []string, slices []resourcev1.ResourceSlice) (evaluated, matched int, rejects []selectorReject, compileErr string) {
 	compiler := dracel.GetCompiler(dracel.Features{})
 	programs := make([]dracel.CompilationResult, 0, len(exprs))
 	for _, e := range exprs {
 		r := compiler.CompileCELExpression(e, dracel.Options{})
 		if r.Error != nil {
-			return 0, 0, r.Error.Error()
+			return 0, 0, nil, r.Error.Error()
 		}
 		programs = append(programs, r)
 	}
 
+	rejCount := make([]int, len(programs))
 	ctx := context.Background()
 	for i := range slices {
 		for j := range slices[i].Spec.Devices {
@@ -39,7 +49,7 @@ func matchDevices(exprs []string, slices []resourcev1.ResourceSlice) (evaluated,
 				ok, _, err := programs[k].DeviceMatches(ctx, dev)
 				if err != nil || !ok {
 					all = false
-					break
+					rejCount[k]++ // tally every selector this device fails
 				}
 			}
 			if all {
@@ -47,7 +57,14 @@ func matchDevices(exprs []string, slices []resourcev1.ResourceSlice) (evaluated,
 			}
 		}
 	}
-	return evaluated, matched, ""
+
+	for k := range programs {
+		if rejCount[k] > 0 {
+			rejects = append(rejects, selectorReject{Expression: exprs[k], Rejected: rejCount[k]})
+		}
+	}
+	sort.Slice(rejects, func(a, b int) bool { return rejects[a].Rejected > rejects[b].Rejected })
+	return evaluated, matched, rejects, ""
 }
 
 // requestSelectors returns the CEL selector expressions in effect for a device
