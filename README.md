@@ -45,7 +45,9 @@ Pod ml/train-0  (requests 2 nvidia.com/gpu)
 **Dynamic Resource Allocation (DRA, k8s 1.34+):** for pods using
 `resourceClaims`, it resolves each claim (including template-generated ones) and
 explains why it's unsatisfied — claim not created, **DeviceClass missing**, **no
-DRA driver publishing ResourceSlices**, or devices published but none free.
+DRA driver publishing ResourceSlices**, or, via **CEL device-selector matching
+using the scheduler's own evaluator**, distinguishes *"no published device
+satisfies your selectors"* from *"matching devices exist but are all in use."*
 
 Each finding comes with a concrete fix. Exit code is `1` when a pod has a
 blocking cause (scriptable), `0` otherwise.
@@ -59,15 +61,16 @@ kubectl krew install gpufit
 ## Roadmap
 
 - `gpufit fit <manifest>` — pre-apply "will this GPU job schedule, and where?"
-- **DRA selector matching** — evaluate DeviceClass/request CEL selectors against
-  published ResourceSlice device attributes for exact "why no match" answers.
+- Per-device "why excluded" — surface which specific selector/attribute rejected
+  each device (today it reports match counts, not per-device reasons).
 
 ## Caveats
 
 Best-effort static analysis from the Kubernetes API. It models GPU/accelerator
-extended resources, the GPU enablement chain, and DRA claims — but not GPU
-utilization, priority/preemption, or full CEL evaluation of DRA device selectors.
-It reads cluster state (nodes, pods, DRA objects) and makes no changes.
+extended resources, the GPU enablement chain, and DRA claims (including CEL
+device-selector matching via the scheduler's own evaluator) — but not GPU
+utilization or priority/preemption. It reads cluster state (nodes, pods, DRA
+objects) and makes no changes.
 
 ## License
 

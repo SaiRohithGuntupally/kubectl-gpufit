@@ -128,15 +128,53 @@ func TestDiagnoseDRA_NoDriverPublishing(t *testing.T) {
 	}
 }
 
+func classWithSel(name, expr string) resourcev1.DeviceClass {
+	return resourcev1.DeviceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: resourcev1.DeviceClassSpec{
+			Selectors: []resourcev1.DeviceSelector{{CEL: &resourcev1.CELDeviceSelector{Expression: expr}}},
+		},
+	}
+}
+
 func TestDiagnoseDRA_DevicesPublishedButNoneFree(t *testing.T) {
+	// Class has no selectors → every published device qualifies, so the only
+	// remaining explanation for an unallocated claim is "all in use".
 	pod := draPod("train", "gpu", "claim-1")
 	claims := []resourcev1.ResourceClaim{claimObj("claim-1", "gpu.nvidia.com", false)}
 	classes := []resourcev1.DeviceClass{classObj("gpu.nvidia.com")}
 	slices := []resourcev1.ResourceSlice{sliceObj("gpu.nvidia.com", "gpu-0", "gpu-1")}
 	r := DiagnoseDRA(pod, claims, slices, classes)
 	d := detailOf(r)
-	if !contains(d, "2 device(s) are published") || !contains(d, "gpu.nvidia.com") {
-		t.Fatalf("want devices-published-but-none-free detail, got:\n%s", d)
+	if !contains(d, "2 device(s) are published") || !contains(d, "already in use") {
+		t.Fatalf("want devices-in-use detail, got:\n%s", d)
+	}
+}
+
+func TestDiagnoseDRA_CELNoDeviceMatches(t *testing.T) {
+	// Class selector requires a driver that no published device has → 0 match.
+	pod := draPod("train", "gpu", "claim-1")
+	claims := []resourcev1.ResourceClaim{claimObj("claim-1", "gpu.nvidia.com", false)}
+	classes := []resourcev1.DeviceClass{classWithSel("gpu.nvidia.com", `device.driver == "absent.example.com"`)}
+	slices := []resourcev1.ResourceSlice{sliceObj("gpu.nvidia.com", "gpu-0", "gpu-1")}
+	r := DiagnoseDRA(pod, claims, slices, classes)
+	d := detailOf(r)
+	if !contains(d, "none satisfy the CEL selectors") {
+		t.Fatalf("want CEL no-match detail, got:\n%s", d)
+	}
+}
+
+func TestDiagnoseDRA_CELMatchesButInUse(t *testing.T) {
+	// Class selector matches the published driver → devices match, but claim is
+	// still unallocated, so the reason is "in use", not "no match".
+	pod := draPod("train", "gpu", "claim-1")
+	claims := []resourcev1.ResourceClaim{claimObj("claim-1", "gpu.nvidia.com", false)}
+	classes := []resourcev1.DeviceClass{classWithSel("gpu.nvidia.com", `device.driver == "gpu.nvidia.com"`)}
+	slices := []resourcev1.ResourceSlice{sliceObj("gpu.nvidia.com", "gpu-0")}
+	r := DiagnoseDRA(pod, claims, slices, classes)
+	d := detailOf(r)
+	if !contains(d, "already in use") {
+		t.Fatalf("want matches-but-in-use detail, got:\n%s", d)
 	}
 }
 

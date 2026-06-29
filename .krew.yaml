@@ -25,9 +25,9 @@ spec:
   caveats: |
     Best-effort static analysis from the Kubernetes API. It models GPU/accelerator
     extended resources (NVIDIA full GPUs and MIG slices, AMD/Intel GPUs), the GPU
-    enablement chain, and DRA claims — but not GPU utilization, priority/
-    preemption, or full CEL evaluation of DRA device selectors. It reads cluster
-    state (nodes, pods, and DRA objects) and makes no changes.
+    enablement chain, and DRA claims — including CEL device-selector matching via
+    the scheduler's own evaluator — but not GPU utilization or priority/preemption.
+    It reads cluster state (nodes, pods, and DRA objects) and makes no changes.
   platforms:
   - selector:
       matchLabels:

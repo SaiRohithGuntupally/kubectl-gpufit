@@ -148,20 +148,58 @@ func unallocatedClaim(name string, fromTemplate bool, claim *resourcev1.Resource
 		}
 	}
 
-	// Inventory: is any driver publishing devices at all?
+	// Inventory + CEL selector matching: is any driver publishing devices, and
+	// does any published device actually satisfy the request's selectors?
 	if slices != nil {
 		total := 0
-		drivers := map[string]bool{}
 		for i := range slices {
-			drivers[slices[i].Spec.Driver] = true
 			total += len(slices[i].Spec.Devices)
 		}
 		if total == 0 {
 			detail += " No ResourceSlices publish any devices — the DRA driver for these classes isn't running or hasn't published its inventory."
 			fix = "Install/repair the DRA driver (e.g. the NVIDIA DRA driver) and confirm `kubectl get resourceslices` lists devices."
-		} else {
-			detail += fmt.Sprintf(" %d device(s) are published cluster-wide by driver(s) %s, but none could be allocated — likely all already in use, or none match the request's class/selectors.", total, joinComma(keys(drivers)))
-			fix = "Free a matching device (scale down / delete claims holding them), add nodes with matching devices, or relax the request's selectors."
+			return Cause{Severity: Blocker, Title: title, Detail: detail, Fix: fix}
+		}
+
+		classMap := map[string]*resourcev1.DeviceClass{}
+		for i := range classes {
+			classMap[classes[i].Name] = &classes[i]
+		}
+		var zeroMatch []string
+		anyMatch := false
+		compileErr := ""
+		for ri := range claim.Spec.Devices.Requests {
+			req := claim.Spec.Devices.Requests[ri].Exactly
+			if req == nil {
+				continue
+			}
+			exprs := requestSelectors(req, classMap)
+			if len(exprs) == 0 {
+				// No CEL selectors: any device of the class qualifies, so
+				// membership isn't the blocker.
+				anyMatch = true
+				continue
+			}
+			if _, m, ce := matchDevices(exprs, slices); ce != "" {
+				compileErr = ce
+			} else if m == 0 {
+				zeroMatch = append(zeroMatch, req.DeviceClassName)
+			} else {
+				anyMatch = true
+			}
+		}
+
+		switch {
+		case compileErr != "":
+			detail += fmt.Sprintf(" %d device(s) are published, but a selector couldn't be evaluated (%s).", total, compileErr)
+		case len(zeroMatch) > 0:
+			detail += fmt.Sprintf(" Of %d published device(s), none satisfy the CEL selectors for request class(es) %s (evaluated with the scheduler's matcher) — the attribute/selector constraints exclude every device.", total, joinComma(dedupe(zeroMatch)))
+			fix = "Loosen the request/DeviceClass CEL selectors, or add nodes whose devices expose the required attributes."
+		case anyMatch:
+			detail += fmt.Sprintf(" %d device(s) are published and at least one matches the request's selectors, but the claim is still unallocated — the matching devices are already in use.", total)
+			fix = "Free a matching device (scale down / delete the claims holding it) or add nodes with more matching devices."
+		default:
+			detail += fmt.Sprintf(" %d device(s) are published cluster-wide, but none could be allocated.", total)
 		}
 	}
 
@@ -172,6 +210,19 @@ func sortedClassKeys(m map[string]int64) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func dedupe(s []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range s {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
 	}
 	sort.Strings(out)
 	return out
