@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -102,11 +103,22 @@ func runWhy(ctx context.Context, client kubernetes.Interface, opts options) (boo
 	if err != nil {
 		return false, err
 	}
-	view, chain, err := gatherGPU(ctx, client)
-	if err != nil {
-		return false, err
+
+	// DRA pods (k8s 1.34+) request devices via resourceClaims, not extended
+	// resources, so they need a different analysis path.
+	var res gpu.Result
+	if gpu.UsesDRA(p) {
+		res, err = diagnoseDRA(ctx, client, p)
+		if err != nil {
+			return false, err
+		}
+	} else {
+		view, chain, err := gatherGPU(ctx, client)
+		if err != nil {
+			return false, err
+		}
+		res = gpu.Diagnose(p, view, &chain)
 	}
-	res := gpu.Diagnose(p, view, &chain)
 	if structured(opts.output) {
 		if err := emit(opts.output, res); err != nil {
 			return false, err
@@ -115,6 +127,24 @@ func runWhy(ctx context.Context, client kubernetes.Interface, opts options) (boo
 	}
 	printWhy(res)
 	return res.HasBlocker(), nil
+}
+
+// diagnoseDRA fetches the DRA objects a pod depends on (its ResourceClaims, plus
+// cluster ResourceSlices and DeviceClasses) and runs the DRA analysis.
+func diagnoseDRA(ctx context.Context, client kubernetes.Interface, p *corev1.Pod) (gpu.Result, error) {
+	claims, err := client.ResourceV1().ResourceClaims(p.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return gpu.Result{}, err
+	}
+	slices, err := client.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return gpu.Result{}, err
+	}
+	classes, err := client.ResourceV1().DeviceClasses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return gpu.Result{}, err
+	}
+	return gpu.DiagnoseDRA(p, claims.Items, slices.Items, classes.Items), nil
 }
 
 // gatherGPU lists nodes and pods once and derives both the GPU allocation view
