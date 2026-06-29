@@ -92,4 +92,22 @@ func printWhy(r gpu.Result) {
 		}
 		fmt.Printf("      fix: %s\n\n", c.Fix)
 	}
+
+	if len(r.Candidates) > 0 {
+		fmt.Printf("  ✓ would schedule on %d node(s):\n", len(r.Candidates))
+		for _, c := range r.Candidates {
+			fmt.Printf("      %s (free: %s)\n", c.Node, formatFree(c.Free))
+		}
+		fmt.Println()
+	}
+}
+
+// formatFree renders a node's free GPU counts deterministically.
+func formatFree(free map[string]int64) string {
+	parts := make([]string, 0, len(free))
+	for k, v := range free {
+		parts = append(parts, fmt.Sprintf("%d %s", v, k))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }

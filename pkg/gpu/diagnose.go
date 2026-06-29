@@ -53,12 +53,19 @@ type Cause struct {
 	Fix      string   `json:"fix"`
 }
 
+// NodeCandidate is a node where the pod's GPU requests would fit right now.
+type NodeCandidate struct {
+	Node string           `json:"node"`
+	Free map[string]int64 `json:"free"` // free count per requested GPU resource
+}
+
 // Result is the GPU diagnosis for one pod.
 type Result struct {
-	Namespace string           `json:"namespace"`
-	Pod       string           `json:"pod"`
-	Requests  map[string]int64 `json:"requests"`
-	Causes    []Cause          `json:"causes"`
+	Namespace  string           `json:"namespace"`
+	Pod        string           `json:"pod"`
+	Requests   map[string]int64 `json:"requests"`
+	Causes     []Cause          `json:"causes"`
+	Candidates []NodeCandidate  `json:"candidates,omitempty"`
 }
 
 // HasBlocker reports whether any cause is a Blocker (used for the CLI exit code).
@@ -102,6 +109,8 @@ func Diagnose(pod *corev1.Pod, nodes []NodeGPU, chain *ChainStatus) Result {
 			usable = append(usable, n)
 		}
 	}
+
+	res.Candidates = computeCandidates(pod, req, usable)
 
 	for _, name := range sortedKeys(req) {
 		need := req[corev1.ResourceName(name)]
@@ -173,6 +182,32 @@ func Diagnose(pod *corev1.Pod, nodes []NodeGPU, chain *ChainStatus) Result {
 		})
 	}
 	return res
+}
+
+// computeCandidates returns the usable nodes where every requested GPU resource
+// fits right now and the pod tolerates the node's GPU taints.
+func computeCandidates(pod *corev1.Pod, req map[corev1.ResourceName]int64, usable []NodeGPU) []NodeCandidate {
+	var out []NodeCandidate
+	for _, n := range usable {
+		if len(untolerated(pod, n.GPUTaints)) > 0 {
+			continue
+		}
+		free := map[string]int64{}
+		fits := true
+		for name, need := range req {
+			ra, ok := resourceOf(n, string(name))
+			if !ok || ra.Free() < need {
+				fits = false
+				break
+			}
+			free[string(name)] = ra.Free()
+		}
+		if fits {
+			out = append(out, NodeCandidate{Node: n.Name, Free: free})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Node < out[j].Node })
+	return out
 }
 
 func resourceOf(n NodeGPU, name string) (ResourceAlloc, bool) {

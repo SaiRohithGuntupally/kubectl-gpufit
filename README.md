@@ -65,7 +65,15 @@ Pod ml/(manifest)  (requests 8 nvidia.com/gpu)
       ...
 ```
 
-Exit `1` if it wouldn't schedule onto current GPUs, `0` if it would.
+Exit `1` if it wouldn't schedule onto current GPUs, `0` if it would. When it
+fits, both `fit` and `why` list the **candidate nodes** it would land on with
+their free GPU counts:
+
+```
+  ✓ would schedule on 2 node(s):
+      gpu-a100-1 (free: 2 nvidia.com/gpu)
+      gpu-a100-3 (free: 8 nvidia.com/gpu)
+```
 
 ## Install
 
@@ -75,8 +83,7 @@ kubectl krew install gpufit
 
 ## Roadmap
 
-- Candidate-node listing for `fit` — show *where* a pod would land, not just
-  whether it fits.
+- DRA candidate devices — list which published devices a claim *could* bind to.
 - Richer DRA: per-device attribute diffs, ResourceClaimTemplate rendering.
 
 ## Caveats

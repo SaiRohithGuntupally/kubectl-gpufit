@@ -90,6 +90,21 @@ func TestDiagnose_NoGPURequest(t *testing.T) {
 	}
 }
 
+func TestDiagnose_CandidatesListed(t *testing.T) {
+	tainted := gpuNode("g3", 4)
+	tainted.Spec.Taints = []corev1.Taint{{Key: "nvidia.com/gpu", Effect: corev1.TaintEffectNoSchedule}}
+	// g1 free 4 (candidate), g2 full (not), g3 free 4 but untolerated taint (not).
+	view := Cluster([]corev1.Node{gpuNode("g1", 4), gpuNode("g2", 4), tainted},
+		[]corev1.Pod{gpuPod("a", "g2", 4)})
+	r := Diagnose(pendingGPUPod(1), view, nil)
+	if len(r.Candidates) != 1 || r.Candidates[0].Node != "g1" {
+		t.Fatalf("want g1 as sole candidate, got %+v", r.Candidates)
+	}
+	if r.Candidates[0].Free["nvidia.com/gpu"] != 4 {
+		t.Errorf("want free 4 on g1, got %v", r.Candidates[0].Free)
+	}
+}
+
 func TestDiagnose_FitsWhenRoomExists(t *testing.T) {
 	view := Cluster([]corev1.Node{gpuNode("g1", 8)}, []corev1.Pod{gpuPod("a", "g1", 2)})
 	r := Diagnose(pendingGPUPod(1), view, nil)
