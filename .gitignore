@@ -1,0 +1,5 @@
+/kubectl-gpufit
+*.test
+*.out
+.DS_Store
+/dist/
